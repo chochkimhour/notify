@@ -1,0 +1,21 @@
+{
+  "name": "telegram-workday-alerts",
+  "version": "1.0.0",
+  "description": "Serverless weekday Telegram check-in and check-out reminders",
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=20" },
+  "private": true,
+  "scripts": {
+    "login": "tgcloud login",
+    "dev": "tgcloud run handlers/message",
+    "deploy": "tgcloud push",
+    "status": "tgcloud status",
+    "migrate": "tgcloud migrate",
+    "check": "node --check tgcloud/schema.js && node --check tgcloud/lib/commands.js && node --check tgcloud/handlers/message.js && node --check tgcloud/endpoints/sendAlert.js",
+    "test": "node --test tests/*.test.js"
+  },
+  "devDependencies": {
+    "@tgcloud/cli": "^0.2.0"
+  }
+}

@@ -1,0 +1,74 @@
+name: Telegram Serverless CI/CD
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 1 * * 1-5'
+    - cron: '0 5 * * 1-5'
+    - cron: '30 6 * * 1-5'
+    - cron: '30 10 * * 1-5'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: telegram-workday-alerts-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    if: github.event_name != 'schedule'
+    name: Check JavaScript modules
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install
+      - run: npm run check
+      - run: npm test
+
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    name: Deploy Telegram Serverless modules
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install
+      - run: npx tgcloud push
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN }}
+
+  reminder:
+    if: github.event_name == 'schedule'
+    name: Send scheduled attendance reminder
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install
+      - name: Map schedule to alert
+        id: alert
+        env:
+          SCHEDULE: ${{ github.event.schedule }}
+        run: |
+          case "$SCHEDULE" in
+            '0 1 * * 1-5') echo 'name=morning-in' >> "$GITHUB_OUTPUT" ;;
+            '0 5 * * 1-5') echo 'name=morning-out' >> "$GITHUB_OUTPUT" ;;
+            '30 6 * * 1-5') echo 'name=afternoon-in' >> "$GITHUB_OUTPUT" ;;
+            '30 10 * * 1-5') echo 'name=afternoon-out' >> "$GITHUB_OUTPUT" ;;
+            *) echo "Unknown schedule: $SCHEDULE" >&2; exit 1 ;;
+          esac
+      - name: Run Telegram Serverless alert module
+        run: npx tgcloud run endpoints/sendAlert "{ alert: '${{ steps.alert.outputs.name }}' }"
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN }}
