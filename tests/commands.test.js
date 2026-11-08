@@ -1,47 +1,72 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { handleMessage } from '../tgcloud/lib/commands.js';
+import { handleMessage } from '../lib/commands.js';
+import { formatAlert, sendAlert } from '../lib/alerts.js';
+import { getRecipients } from '../lib/telegram.js';
 
-function createHarness() {
-  const subscriptions = new Set();
+process.env.LOG_LEVEL = 'silent';
+
+function createHarness(chatIds = '') {
   const replies = [];
-  const store = {
-    async subscribe(chatId) { subscriptions.add(chatId); },
-    async unsubscribe(chatId) { subscriptions.delete(chatId); },
-    async isSubscribed(chatId) { return subscriptions.has(chatId); },
-  };
   const sendMessage = async (chatId, text) => replies.push({ chatId, text });
-  return { store, sendMessage, replies, subscriptions };
+  return { recipients: getRecipients(chatIds), sendMessage, replies };
 }
 
-test('/start subscribes and reports schedule', async () => {
+test('getRecipients parses comma-separated chat IDs', () => {
+  assert.deepEqual([...getRecipients(' 42, -100123 ,,')], ['42', '-100123']);
+});
+
+test('/start shows the chat ID when the chat is not enrolled', async () => {
   const h = createHarness();
-  await handleMessage({ chat: { id: 42 }, text: '/start' }, h.store, h.sendMessage);
-  assert.equal(h.subscriptions.has(42), true);
+  const command = await handleMessage({ chat: { id: 42 }, text: '/start' }, h.recipients, h.sendMessage);
+  assert.equal(command, 'start');
+  assert.match(h.replies[0].text, /Chat ID: <code>42<\/code>/);
+});
+
+test('/start reports the schedule for an enrolled chat', async () => {
+  const h = createHarness('42');
+  await handleMessage({ chat: { id: 42 }, text: '/start@MyBot' }, h.recipients, h.sendMessage);
   assert.match(h.replies[0].text, /08:00/);
-  assert.match(h.replies[0].text, /17:30/);
+  assert.match(h.replies[0].text, /05:30 PM/);
 });
 
-test('/status distinguishes active and inactive subscriptions', async () => {
-  const h = createHarness();
-  await handleMessage({ chat: { id: 42 }, text: '/status' }, h.store, h.sendMessage);
+test('/status distinguishes active and inactive chats', async () => {
+  const h = createHarness('42');
+  await handleMessage({ chat: { id: 7 }, text: '/status' }, h.recipients, h.sendMessage);
+  await handleMessage({ chat: { id: 42 }, text: '/status' }, h.recipients, h.sendMessage);
   assert.match(h.replies[0].text, /Inactive/);
-  await handleMessage({ chat: { id: 42 }, text: '/start' }, h.store, h.sendMessage);
-  await handleMessage({ chat: { id: 42 }, text: '/status' }, h.store, h.sendMessage);
-  assert.match(h.replies.at(-1).text, /Active/);
-});
-
-test('/stop unsubscribes', async () => {
-  const h = createHarness();
-  await handleMessage({ chat: { id: 42 }, text: '/start' }, h.store, h.sendMessage);
-  await handleMessage({ chat: { id: 42 }, text: '/stop' }, h.store, h.sendMessage);
-  assert.equal(h.subscriptions.has(42), false);
-  assert.match(h.replies.at(-1).text, /unsubscribed/i);
+  assert.match(h.replies[1].text, /Active/);
 });
 
 test('/help replies with command guide', async () => {
   const h = createHarness();
-  await handleMessage({ chat: { id: 42 }, text: '/help' }, h.store, h.sendMessage);
+  await handleMessage({ chat: { id: 42 }, text: '/help' }, h.recipients, h.sendMessage);
   assert.match(h.replies[0].text, /\/start/);
   assert.match(h.replies[0].text, /\/status/);
+});
+
+test('unknown messages get no reply', async () => {
+  const h = createHarness();
+  assert.equal(await handleMessage({ chat: { id: 42 }, text: 'hello' }, h.recipients, h.sendMessage), null);
+  assert.equal(h.replies.length, 0);
+});
+
+test('formatAlert includes title, Phnom Penh date and scheduled time', () => {
+  const text = formatAlert('morning-in', new Date('2026-11-09T01:00:00Z'));
+  assert.match(text, /Morning Check-in Reminder/);
+  assert.match(text, /Monday, 9 November 2026 · 08:00 AM$/m);
+});
+
+test('sendAlert delivers to every recipient and counts failures', async () => {
+  const sent = [];
+  const result = await sendAlert('morning-in', getRecipients('1,2,3'), async (chatId, text) => {
+    if (chatId === '2') throw new Error('blocked');
+    sent.push({ chatId, text });
+  });
+  assert.deepEqual(result, { delivered: 2, failed: 1 });
+  assert.match(sent[0].text, /check in/);
+});
+
+test('sendAlert rejects unknown alert names', async () => {
+  await assert.rejects(sendAlert('lunch', getRecipients('1'), async () => {}), /Unknown alert/);
 });

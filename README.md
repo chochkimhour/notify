@@ -1,7 +1,6 @@
 # Telegram Workday Alerts
 
-Weekday attendance reminders built on Telegram Serverless (`tgcloud`). Telegram runs the bot handlers and hosts the subscriber database. GitHub Actions provides the external schedule because Telegram Serverless does not currently run cron jobs.
-
+Weekday attendance reminders for Telegram, deployed on [Vercel](https://vercel.com). There's no database: the chats that receive reminders are listed in the `TELEGRAM_CHAT_IDS` environment variable. GitHub Actions triggers each reminder on schedule by calling the Vercel endpoint.
 
 ## Schedule
 
@@ -9,56 +8,120 @@ Times are in Phnom Penh time (UTC+7). GitHub Actions schedules use UTC.
 
 | Phnom Penh | Alert | UTC schedule |
 | --- | --- | --- |
-| Mon–Fri, 08:00 | Morning check-in | `0 1 * * 1-5` |
-| Mon–Fri, 12:00 | Morning check-out | `0 5 * * 1-5` |
-| Mon–Fri, 13:30 | Afternoon check-in | `30 6 * * 1-5` |
-| Mon–Fri, 17:30 | Afternoon check-out | `30 10 * * 1-5` |
+| Mon–Fri, 08:00 AM | Morning check-in | `0 1 * * 1-5` |
+| Mon–Fri, 12:00 PM | Morning check-out | `0 5 * * 1-5` |
+| Mon–Fri, 01:30 PM | Afternoon check-in | `30 6 * * 1-5` |
+| Mon–Fri, 05:30 PM | Afternoon check-out | `30 10 * * 1-5` |
 
 GitHub Actions may start scheduled runs late during busy periods, so delivery is not guaranteed to the exact minute.
 
-## Requirements and access
+## Messages
 
-- Node.js 20 or newer and npm
-- Telegram Serverless enabled for your bot in [@BotFather](https://t.me/BotFather). Telegram currently offers this as a beta feature and access may need to be requested.
-- The bot's **Serverless → CLI Access** token. This `app…` token is different from the Bot API token; never commit it or share it in chat.
-- A GitHub repository with Actions enabled
+Reminders are sent as plain, formal text with a bold title, the Phnom Penh date and the scheduled time:
 
-## Set up and deploy
+> **Morning Check-in Reminder**
+> Monday, 9 November 2026 · 08:00 AM
+>
+> Good morning. Please remember to check in for the morning session.
 
-1. Install the project dependencies: `npm install`.
-2. In @BotFather, enable Serverless for the bot and request access if prompted.
-3. Get the separate CLI Access token from **BotFather → your bot → Serverless → CLI Access → Access token**.
-4. Authenticate from this project directory with `npx tgcloud login`, then paste the CLI token into its prompt.
-5. Check the pending changes with `npx tgcloud status`.
-6. Deploy the bot modules with `npm run deploy` (`npx tgcloud push`).
-7. Create the subscriber database table with `npm run migrate` (`npx tgcloud migrate`) and confirm the proposed table creation.
-8. Check the managed webhook using `npx tgcloud webhook`. Telegram Serverless manages the webhook; do not set it manually.
-9. In the GitHub repository, add an Actions secret named `TGCLOUD_TOKEN` with the Serverless CLI Access token. Push to `main` to activate automated deployments and scheduled reminders.
-10. Message your bot with `/start` to subscribe.
+The time shown is the scheduled time, not the send time, so a late GitHub Actions run still shows the correct time. To change the wording, edit the title, time or body of each alert in [`lib/alerts.js`](lib/alerts.js); command replies are in [`lib/commands.js`](lib/commands.js). Messages use Telegram's HTML formatting, so escape `<`, `>` and `&` in any new text. If you change a time, also change its cron line in the workflow.
 
-The `.tgcloud/` folder stores local CLI credentials and state and is excluded from Git.
+## How it works
+
+| Path | Purpose |
+| --- | --- |
+| `api/webhook.js` | Telegram webhook. Answers `/start`, `/status`, `/stop` and `/help`. |
+| `api/send-alert.js` | `POST { "alert": "morning-in" }` with `Authorization: Bearer <ALERT_SECRET>` sends that alert to every chat in `TELEGRAM_CHAT_IDS`. |
+| `lib/alerts.js` | Alert wording, schedule times and delivery to every chat. |
+| `lib/commands.js` | Replies to `/start`, `/status`, `/stop` and `/help`. |
+| `lib/telegram.js` | Telegram Bot API client and `TELEGRAM_CHAT_IDS` parsing. |
+| `lib/log.js` | JSON logger (see [Logs](#logs)). |
+| `scripts/dev-server.js`, `scripts/test-loop.js` | Local server and the reminder test loop. Not deployed as routes. |
+| `.github/workflows/ci-cd.yml` | Runs checks on pull requests and pushes, and calls `/api/send-alert` on the four weekday schedules. |
+
+Alert names: `morning-in`, `morning-out`, `afternoon-in`, `afternoon-out`.
+
+## Environment variables
+
+See [`.env.example`](.env.example).
+
+| Variable | Where | Value |
+| --- | --- | --- |
+| `TELEGRAM_BOT_TOKEN` | Vercel | Bot API token from [@BotFather](https://t.me/BotFather) |
+| `TELEGRAM_CHAT_IDS` | Vercel | Comma-separated chat IDs to remind, e.g. `123456789,-1001234567890` |
+| `TELEGRAM_WEBHOOK_SECRET` | Vercel | Random string; Telegram sends it with each webhook call |
+| `ALERT_SECRET` | Vercel and GitHub secret | Random string that authorizes `/api/send-alert` |
+| `APP_URL` | GitHub secret | Your deployment URL, e.g. `https://notify.vercel.app` (no trailing slash) |
+
+Generate random secrets with `openssl rand -hex 32`. Telegram webhook secrets may only contain `A-Z`, `a-z`, `0-9`, `_` and `-`.
+
+## Deploy
+
+1. Create the bot with @BotFather and copy its token.
+2. Import this GitHub repository in Vercel (**Add New → Project**). No build settings are needed. Vercel redeploys on every push to `main`.
+3. In **Vercel → Project → Settings → Environment Variables**, add `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, `ALERT_SECRET` and `TELEGRAM_CHAT_IDS` (it can be empty at first), then redeploy.
+4. Register the webhook once:
+
+   ```bash
+   curl "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook" \
+     -d "url=https://<your-app>.vercel.app/api/webhook" \
+     -d "secret_token=<TELEGRAM_WEBHOOK_SECRET>" \
+     -d "allowed_updates=[\"message\"]"
+   ```
+
+5. Send `/start` to the bot (or in a group with the bot). It replies with the chat ID. Add that ID to `TELEGRAM_CHAT_IDS` in Vercel and redeploy.
+6. In **GitHub → Settings → Secrets and variables → Actions**, add `APP_URL` and `ALERT_SECRET`.
+7. Test delivery once:
+
+   ```bash
+   curl -X POST "https://<your-app>.vercel.app/api/send-alert" \
+     -H "Authorization: Bearer <ALERT_SECRET>" \
+     -H "Content-Type: application/json" \
+     -d '{"alert":"morning-in"}'
+   ```
+
+   In PowerShell:
+
+   ```powershell
+   Invoke-RestMethod -Method Post -Uri "https://<your-app>.vercel.app/api/send-alert" -Headers @{ Authorization = "Bearer <ALERT_SECRET>" } -ContentType 'application/json' -Body '{"alert":"morning-in"}'
+   ```
+
+To stop reminders for a chat, remove its ID from `TELEGRAM_CHAT_IDS` and redeploy.
 
 ## Commands
 
 | Telegram command | Action |
 | --- | --- |
-| `/start` | Subscribe and display the schedule |
-| `/status` | Show subscription status and reminder times |
-| `/stop` | Unsubscribe |
+| `/start` | Show the chat ID and whether this chat receives reminders |
+| `/status` | Show reminder status and schedule |
+| `/stop` | Explain how to stop reminders |
 | `/help` | Show command help |
 
-## Development and checks
+## Logs
 
-- `npm install` installs the CLI and development tools.
-- `npm run check` checks JavaScript module syntax.
-- `npm test` runs offline command-handler tests with a fake subscriber store and message sender. These tests do not need Telegram Serverless access and do not send messages.
-- `npx tgcloud run handlers/message '{ chat: { id: 123, type: "private" }, text: "/help" }'` invokes the handler on Telegram Serverless with a sample update.
-- `npx tgcloud status` compares local modules with the deployed copy.
-- `npm run deploy` deploys changed modules.
+Every route writes one JSON line per event, for example:
 
-## GitHub Actions
+```json
+{"time":"2026-11-09T01:00:02.114Z","level":"info","event":"alert.done","alert":"morning-in","delivered":12,"failed":0}
+```
 
-The workflow at `.github/workflows/ci-cd.yml` checks changes on pull requests, deploys pushes to `main`, and invokes the alert endpoint on the four weekday UTC schedules. Set the repository Actions secret `TGCLOUD_TOKEN` before relying on deployment or scheduled deliveries. Scheduled reminders run on the default branch and require the bot modules and database schema to have been deployed and migrated first.
+| Event | Level | Meaning |
+| --- | --- | --- |
+| `alert.start` / `alert.done` | info (warn if any failed) | A reminder run and its delivery counts |
+| `alert.delivery_failed` | error | One chat could not be reached, with Telegram's reason |
+| `webhook.message` | info | A chat sent a command |
+| `webhook.failed` | error | Replying to a command failed |
+| `webhook.unauthorized`, `send_alert.unauthorized` | warn | A request arrived without the right secret |
+| `send_alert.rejected` | warn | An unknown alert name was requested |
+
+On Vercel, view them under **Project → Logs** (filter by `level` or `event`). Locally they print in the terminal. Set `LOG_LEVEL` to `debug`, `info` (default), `warn`, `error` or `silent`.
+
+## Development
+
+- `npm run check` checks JavaScript syntax.
+- `npm run test:loop` sends all four reminders to `TELEGRAM_CHAT_IDS`, one per minute. Pass `-- <count> <seconds>` to change it, e.g. `npm run test:loop -- 1 0` sends one now.
+- `npm test` runs offline tests with a fake message sender. They don't contact Telegram.
+- `npm run dev` serves the API routes at `http://localhost:3000` with variables from `.env.local`, without needing a Vercel login. Telegram can't reach `localhost`, so the webhook only receives messages through a tunnel such as `cloudflared tunnel --url http://localhost:3000`.
 
 Released under the [MIT License](LICENSE).
 
