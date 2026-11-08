@@ -24,7 +24,9 @@ Reminders are sent as plain, formal text with a bold title, the Phnom Penh date 
 >
 > Good morning. Please remember to check in for the morning session.
 
-The time shown is the scheduled time, not the send time, so a late GitHub Actions run still shows the correct time. To change the wording, edit the title, time or body of each alert in [`lib/alerts.js`](lib/alerts.js); command replies are in [`lib/commands.js`](lib/commands.js). Messages use Telegram's HTML formatting, so escape `<`, `>` and `&` in any new text. If you change a time, also change its cron line in the workflow.
+The time shown is the scheduled time, not the send time, so a late GitHub Actions run still shows the correct time. To change the wording, edit the title, time or body of each alert in [`lib/alerts.js`](lib/alerts.js); command replies are in [`lib/commands.js`](lib/commands.js). Alert text is HTML-escaped automatically, so `&`, `<` and `>` are safe to use. If you change a time, also change its cron line in the workflow.
+
+Reminders are sent one chat at a time (about 25 per second, under Telegram's limit). If Telegram still answers "Too Many Requests", the send waits the time Telegram asks for and retries up to twice.
 
 ## How it works
 
@@ -118,7 +120,11 @@ On Vercel, view them under **Project → Logs** (filter by `level` or `event`). 
 
 ## Development
 
-- `npm run check` checks JavaScript syntax.
+Use Node.js 26 LTS, the same version as Vercel and CI (`engines` in `package.json` is `26.x`). Vercel applies Node patch and security updates itself; locally, update with the Node.js installer or `winget upgrade OpenJS.NodeJS.LTS`.
+
+- `npm run check` checks the syntax of every `.js` file in `api/`, `lib/`, `scripts/` and `tests/`.
+- To send a reminder from GitHub without waiting for the schedule, open **Actions → CI and reminders → Run workflow** and pick the alert.
+- GitHub turns off scheduled workflows after 60 days without repository activity. A monthly `keepalive` job in the same workflow re-enables it, so reminders keep running without commits.
 - `npm run test:loop` sends all four reminders to `TELEGRAM_CHAT_IDS`, one per minute. Pass `-- <count> <seconds>` to change it, e.g. `npm run test:loop -- 1 0` sends one now.
 - `npm test` runs offline tests with a fake message sender. They don't contact Telegram.
 - `npm run dev` serves the API routes at `http://localhost:3000` with variables from `.env.local`, without needing a Vercel login. Telegram can't reach `localhost`, so the webhook only receives messages through a tunnel such as `cloudflared tunnel --url http://localhost:3000`.

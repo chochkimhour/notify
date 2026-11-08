@@ -9,33 +9,46 @@ on:
     - cron: '0 5 * * 1-5'
     - cron: '30 6 * * 1-5'
     - cron: '30 10 * * 1-5'
+    # Monthly keepalive: GitHub disables scheduled workflows after 60 days without repository activity.
+    - cron: '0 0 1 * *'
+  workflow_dispatch:
+    inputs:
+      alert:
+        description: Reminder to send now
+        type: choice
+        options: [morning-in, morning-out, afternoon-in, afternoon-out]
 
 permissions:
   contents: read
 
 jobs:
   check:
-    if: github.event_name != 'schedule'
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
     name: Check and test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 26
       - run: npm run check
       - run: npm test
 
   reminder:
-    if: github.event_name == 'schedule'
-    name: Send scheduled attendance reminder
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && github.event.schedule != '0 0 1 * *')
+    name: Send attendance reminder
     runs-on: ubuntu-latest
     steps:
-      - name: Map schedule to alert
+      - name: Choose alert
         id: alert
         env:
           SCHEDULE: ${{ github.event.schedule }}
+          MANUAL_ALERT: ${{ inputs.alert }}
         run: |
+          if [ -n "$MANUAL_ALERT" ]; then
+            echo "name=$MANUAL_ALERT" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           case "$SCHEDULE" in
             '0 1 * * 1-5') echo 'name=morning-in' >> "$GITHUB_OUTPUT" ;;
             '0 5 * * 1-5') echo 'name=morning-out' >> "$GITHUB_OUTPUT" ;;
@@ -54,3 +67,15 @@ jobs:
             -H "Authorization: Bearer $ALERT_SECRET" \
             -H 'Content-Type: application/json' \
             -d "{\"alert\":\"$ALERT\"}"
+
+  keepalive:
+    if: github.event_name == 'schedule' && github.event.schedule == '0 0 1 * *'
+    name: Keep scheduled workflow enabled
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Re-enable this workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/ci-cd.yml/enable"
