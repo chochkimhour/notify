@@ -8,12 +8,12 @@ Times are in Phnom Penh time (UTC+7). GitHub Actions schedules use UTC.
 
 | Phnom Penh | Alert | UTC schedule |
 | --- | --- | --- |
-| Mon–Fri, 08:00 AM | Morning check-in | `0 1 * * 1-5` |
-| Mon–Fri, 12:00 PM | Morning check-out | `0 5 * * 1-5` |
-| Mon–Fri, 01:30 PM | Afternoon check-in | `30 6 * * 1-5` |
-| Mon–Fri, 05:30 PM | Afternoon check-out | `30 10 * * 1-5` |
+| Mon–Fri, 08:00 AM | Morning check-in | `57 0 * * 1-5` |
+| Mon–Fri, 12:00 PM | Morning check-out | `57 4 * * 1-5` |
+| Mon–Fri, 01:30 PM | Afternoon check-in | `27 6 * * 1-5` |
+| Mon–Fri, 05:30 PM | Afternoon check-out | `27 10 * * 1-5` |
 
-GitHub Actions may start scheduled runs late during busy periods, so delivery is not guaranteed to the exact minute.
+Each run is scheduled 3 minutes before the reminder time, because GitHub delays runs most at the start of the hour and half hour. GitHub Actions may still start scheduled runs late during busy periods, so delivery is not guaranteed to the exact minute.
 
 ## Messages
 
