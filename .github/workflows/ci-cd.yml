@@ -4,14 +4,6 @@ on:
   pull_request:
   push:
     branches: [main]
-  schedule:
-    # A few minutes before each reminder time: GitHub delays runs most at the start of the hour.
-    - cron: '57 0 * * 1-5'
-    - cron: '57 4 * * 1-5'
-    - cron: '27 6 * * 1-5'
-    - cron: '27 10 * * 1-5'
-    # Monthly keepalive: GitHub disables scheduled workflows after 60 days without repository activity.
-    - cron: '0 0 1 * *'
   workflow_dispatch:
     inputs:
       alert:
@@ -36,47 +28,18 @@ jobs:
       - run: npm test
 
   reminder:
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && github.event.schedule != '0 0 1 * *')
+    if: github.event_name == 'workflow_dispatch'
     name: Send attendance reminder
     runs-on: ubuntu-latest
     steps:
-      - name: Choose alert
-        id: alert
-        env:
-          SCHEDULE: ${{ github.event.schedule }}
-          MANUAL_ALERT: ${{ inputs.alert }}
-        run: |
-          if [ -n "$MANUAL_ALERT" ]; then
-            echo "name=$MANUAL_ALERT" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          case "$SCHEDULE" in
-            '57 0 * * 1-5') echo 'name=morning-in' >> "$GITHUB_OUTPUT" ;;
-            '57 4 * * 1-5') echo 'name=morning-out' >> "$GITHUB_OUTPUT" ;;
-            '27 6 * * 1-5') echo 'name=afternoon-in' >> "$GITHUB_OUTPUT" ;;
-            '27 10 * * 1-5') echo 'name=afternoon-out' >> "$GITHUB_OUTPUT" ;;
-            *) echo "Unknown schedule: $SCHEDULE" >&2; exit 1 ;;
-          esac
       - name: Call Vercel alert endpoint
         env:
           APP_URL: ${{ secrets.APP_URL }}
           ALERT_SECRET: ${{ secrets.ALERT_SECRET }}
-          ALERT: ${{ steps.alert.outputs.name }}
+          ALERT: ${{ inputs.alert }}
         run: |
           curl --fail-with-body --silent --show-error \
             -X POST "$APP_URL/api/send-alert" \
             -H "Authorization: Bearer $ALERT_SECRET" \
             -H 'Content-Type: application/json' \
             -d "{\"alert\":\"$ALERT\"}"
-
-  keepalive:
-    if: github.event_name == 'schedule' && github.event.schedule == '0 0 1 * *'
-    name: Keep scheduled workflow enabled
-    runs-on: ubuntu-latest
-    permissions:
-      actions: write
-    steps:
-      - name: Re-enable this workflow
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/ci-cd.yml/enable"

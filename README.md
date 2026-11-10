@@ -1,19 +1,17 @@
 # Telegram Workday Alerts
 
-Weekday attendance reminders for Telegram, deployed on [Vercel](https://vercel.com). There's no database: the chats that receive reminders are listed in the `TELEGRAM_CHAT_IDS` environment variable. GitHub Actions triggers each reminder on schedule by calling the Vercel endpoint.
+Weekday attendance reminders for Telegram, deployed on [Vercel](https://vercel.com). There's no database: the chats that receive reminders are listed in the `TELEGRAM_CHAT_IDS` environment variable. [cron-job.org](https://cron-job.org) triggers each reminder on schedule by calling the Vercel endpoint.
 
 ## Schedule
 
-Times are in Phnom Penh time (UTC+7). GitHub Actions schedules use UTC.
+Times are in Phnom Penh time (UTC+7). Four cron-job.org jobs, each set to timezone `Asia/Phnom_Penh`, send a `POST` to `$APP_URL/api/send-alert` with the headers `Authorization: Bearer <ALERT_SECRET>` and `Content-Type: application/json`.
 
-| Phnom Penh | Alert | UTC schedule |
+| Time (Mon–Fri) | Alert | Request body |
 | --- | --- | --- |
-| Mon–Fri, 08:00 AM | Morning check-in | `57 0 * * 1-5` |
-| Mon–Fri, 12:00 PM | Morning check-out | `57 4 * * 1-5` |
-| Mon–Fri, 01:30 PM | Afternoon check-in | `27 6 * * 1-5` |
-| Mon–Fri, 05:30 PM | Afternoon check-out | `27 10 * * 1-5` |
-
-Each run is scheduled 3 minutes before the reminder time, because GitHub delays runs most at the start of the hour and half hour. GitHub Actions may still start scheduled runs late during busy periods, so delivery is not guaranteed to the exact minute.
+| 08:00 AM | Morning check-in | `{"alert":"morning-in"}` |
+| 12:00 PM | Morning check-out | `{"alert":"morning-out"}` |
+| 01:30 PM | Afternoon check-in | `{"alert":"afternoon-in"}` |
+| 05:30 PM | Afternoon check-out | `{"alert":"afternoon-out"}` |
 
 ## Messages
 
@@ -24,7 +22,7 @@ Reminders are sent as plain, formal text with a bold title, the Phnom Penh date 
 >
 > Good morning. Please remember to check in for the morning session.
 
-The time shown is the scheduled time, not the send time, so a late GitHub Actions run still shows the correct time. To change the wording, edit the title, time or body of each alert in [`lib/alerts.js`](lib/alerts.js); command replies are in [`lib/commands.js`](lib/commands.js). Alert text is HTML-escaped automatically, so `&`, `<` and `>` are safe to use. If you change a time, also change its cron line in the workflow.
+The time shown is the scheduled time, not the send time, so a late run still shows the correct time. To change the wording, edit the title, time or body of each alert in [`lib/alerts.js`](lib/alerts.js); command replies are in [`lib/commands.js`](lib/commands.js). Alert text is HTML-escaped automatically, so `&`, `<` and `>` are safe to use. If you change a time, also change its job in the cron-job.org console.
 
 Reminders are sent one chat at a time (about 25 per second, under Telegram's limit). If Telegram still answers "Too Many Requests", the send waits the time Telegram asks for and retries up to twice.
 
@@ -39,7 +37,7 @@ Reminders are sent one chat at a time (about 25 per second, under Telegram's lim
 | `lib/telegram.js` | Telegram Bot API client and `TELEGRAM_CHAT_IDS` parsing. |
 | `lib/log.js` | JSON logger (see [Logs](#logs)). |
 | `scripts/dev-server.js`, `scripts/test-loop.js` | Local server and the reminder test loop. Not deployed as routes. |
-| `.github/workflows/ci-cd.yml` | Runs checks on pull requests and pushes, and calls `/api/send-alert` on the four weekday schedules. |
+| `.github/workflows/ci-cd.yml` | Runs checks on pull requests and pushes, and can send one alert manually. Scheduling is done by cron-job.org. |
 
 Alert names: `morning-in`, `morning-out`, `afternoon-in`, `afternoon-out`.
 
@@ -123,8 +121,7 @@ On Vercel, view them under **Project → Logs** (filter by `level` or `event`). 
 Use Node.js 26 LTS, the same version as Vercel and CI (`engines` in `package.json` is `26.x`). Vercel applies Node patch and security updates itself; locally, update with the Node.js installer or `winget upgrade OpenJS.NodeJS.LTS`.
 
 - `npm run check` checks the syntax of every `.js` file in `api/`, `lib/`, `scripts/` and `tests/`.
-- To send a reminder from GitHub without waiting for the schedule, open **Actions → CI and reminders → Run workflow** and pick the alert.
-- GitHub turns off scheduled workflows after 60 days without repository activity. A monthly `keepalive` job in the same workflow re-enables it, so reminders keep running without commits.
+- To send a reminder manually, open **Actions → CI and reminders → Run workflow** and pick the alert.
 - `npm run test:loop` sends all four reminders to `TELEGRAM_CHAT_IDS`, one per minute. Pass `-- <count> <seconds>` to change it, e.g. `npm run test:loop -- 1 0` sends one now.
 - `npm test` runs offline tests with a fake message sender. They don't contact Telegram.
 - `npm run dev` serves the API routes at `http://localhost:3000` with variables from `.env.local`, without needing a Vercel login. Telegram can't reach `localhost`, so the webhook only receives messages through a tunnel such as `cloudflared tunnel --url http://localhost:3000`.
